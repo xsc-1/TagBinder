@@ -11,6 +11,7 @@ export type AnyClass = {
     Destroy:(self:any)->(),
     Start:((self:any)->())?,
     init:((self:any)->())?,
+    Update:((self:any, dt:number)->())
 }
 
 export type FunctionTable = {
@@ -31,6 +32,9 @@ TagBinder.BindedFunctionInstances = {} :: {[string]:{[Instance]:boolean}}
 TagBinder.UpdatingFunctionTags = {} :: {[string]:boolean}
 TagBinder.UpdatingClassTags = {} :: {[string]:boolean}
 
+TagBinder.TaggedInstances = {} :: {[string]:{Instance}}
+TagBinder.TaggedInstanceIndices = {} :: {[string]:{[Instance]:number}}
+
 function TagBinder:BindClass(tagName:string, classTable:AnyClass)
     assert(typeof(classTable) == "table", "class must be a valid class")
     assert(classTable.new, "class table must contain a method named (new)")
@@ -43,6 +47,9 @@ function TagBinder:BindClass(tagName:string, classTable:AnyClass)
     if typeof(classTable.Update) == "function" then
         self.UpdatingClassTags[tagName] = true
     end
+
+    self.TaggedInstances[tagName] = {}
+    self.TaggedInstanceIndices[tagName] = {}
 end
 
 function TagBinder:UnbindClass(tagName:string)
@@ -74,7 +81,7 @@ function TagBinder:WaitForClassObject<A>(obj:A, tagName:string, timeout:number?)
         return self.ClassObjects[tagName][obj]
     end
 
-    while elapsedTime < timeout do
+    while elapsedTime < timeout::number do
         if self.ClassObjects[tagName] and self.ClassObjects[tagName][obj] then
             return self.ClassObjects[tagName][obj]
         end
@@ -103,6 +110,9 @@ function TagBinder:BindFunction(tagName:string, fnTable:FunctionTable)
     if fnTable.update then
         self.UpdatingFunctionTags[tagName] = true
     end
+
+    self.TaggedInstances[tagName] = {}
+    self.TaggedInstanceIndices[tagName] = {}
 end
 
 function TagBinder:UnbindFunction(tagName:string)
@@ -111,6 +121,49 @@ function TagBinder:UnbindFunction(tagName:string)
     self.UpdatingFunctionTags[tagName] = nil
 end
 
+function TagBinder:HasAllTags(obj:Instance, tags:{string})
+    for _,tagName in tags do
+        if not self.TaggedInstanceIndices[tagName][obj] then
+            return false
+        end
+    end
+    return true
+end
+
+function TagBinder:HasAnyTag(obj:Instance, tags:{string})
+    for _,tagName in tags do
+        if self.TaggedInstanceIndices[tagName][obj] then
+            return true
+        end
+    end
+    return false
+end
+
+function TagBinder:HasTag(obj:Instance, tagName:string)
+    return self.TaggedInstanceIndices[tagName][obj] ~= nil
+end
+
+function TagBinder:_RegisterTaggedInstance(tagName:string, obj:Instance)
+    self.TaggedInstances[tagName][#self.TaggedInstances[tagName]+1] = obj
+    self.TaggedInstanceIndices[tagName][obj] = #self.TaggedInstances[tagName]
+end
+
+function TagBinder:_RemoveTaggedInstance(tagName:string, obj:Instance)
+    local index = self.TaggedInstanceIndices[tagName][obj]
+    if not index then
+        return
+    end
+
+    local last = #self.TaggedInstances[tagName]
+    local popped = self.TaggedInstances[tagName][last]
+
+    if last ~= index then
+        self.TaggedInstances[tagName][index] = popped
+        self.TaggedInstanceIndices[tagName][popped] = index
+    end
+    self.TaggedInstances[tagName][last] = nil
+    self.TaggedInstanceIndices[tagName][obj] = nil
+end
 
 function TagBinder:Start()
     if self._running then return end
@@ -126,7 +179,29 @@ function TagBinder:Start()
             if typeof(newClassObj.init) == "function" then
                 task.spawn(newClassObj.init, newClassObj)
             end
+
+            self:_RegisterTaggedInstance(tagName, obj)
         end
+    end
+
+    local function destroyClass(class:AnyClass, obj:Instance, tagName:string)
+        self.ClassObjects[tagName][obj]:Destroy()
+        self.ClassObjects[tagName][obj] = nil
+        self:_RemoveTaggedInstance(tagName, obj)
+    end
+
+    local function setupFunction(fnTable:FunctionTable, obj:Instance, tagName:string)
+        fnTable.setup(obj, obj:GetAttributes())
+        self.BindedFunctionInstances[tagName][obj] = true
+        self:_RegisterTaggedInstance(tagName, obj)
+    end
+
+    local function destroyFunction(fnTable:FunctionTable, obj:Instance, tagName:string)
+        if fnTable.destroy then
+            fnTable.destroy(obj, obj:GetAttributes())
+        end
+        self.BindedFunctionInstances[tagName][obj] = nil
+        self:_RemoveTaggedInstance(tagName, obj)
     end
 
     for tagName, class in self.BindedClasses do
@@ -139,40 +214,34 @@ function TagBinder:Start()
             setupClass(class, obj, tagName)
         end)
         CollectionService:GetInstanceRemovedSignal(tagName):Connect(function(obj)
-            self.ClassObjects[tagName][obj]:Destroy()
-            self.ClassObjects[tagName][obj] = nil
+            destroyClass(class, obj, tagName)
         end)
     end
 
     for tagName, fnTable in self.BindedFunctions do
         local initial = CollectionService:GetTagged(tagName)
         for _,obj:Instance in initial do
-            fnTable.setup(obj, obj:GetAttributes())
-            self.BindedFunctionInstances[tagName][obj] = true
+            setupFunction(fnTable, obj, tagName)
         end
 
         CollectionService:GetInstanceAddedSignal(tagName):Connect(function(obj:Instance)
-            fnTable.setup(obj, obj:GetAttributes())
-            self.BindedFunctionInstances[tagName][obj] = true
+            setupFunction(fnTable, obj, tagName)
         end)
         CollectionService:GetInstanceRemovedSignal(tagName):Connect(function(obj)
-            if fnTable.destroy then
-                fnTable.destroy(obj)
-            end
-            self.BindedFunctionInstances[tagName][obj] = nil
+            destroyFunction(fnTable, obj, tagName)
         end)
     end
 
     RunService.Heartbeat:Connect(function(deltaTime)
         for tagName, _ in self.UpdatingFunctionTags do
-            for obj, _ in self.BindedFunctionInstances[tagName] do
+            for _,obj in self.TaggedInstances[tagName] do
                 self.BindedFunctions[tagName].update(obj, deltaTime)
             end
         end
 
         for tagName, _ in self.UpdatingClassTags do
-            for obj, classObj in self.ClassObjects[tagName] do
-                classObj:Update(deltaTime)
+            for _,obj in self.TaggedInstances[tagName] do
+                self.ClassObjects[tagName][obj]:Update(deltaTime)
             end
         end
     end)

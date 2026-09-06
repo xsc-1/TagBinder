@@ -77,7 +77,7 @@ if you add an :init or :Start method to your class, it will be called after .new
 ### 3. Update (optional)
 if you add an :Update method to your class or funtion table, it will be called every heartbeat with deltaTime
 
-### 4. Destroy (optional)
+### 4. Destroy
 called when tagged instance gets destroyed
 
 
