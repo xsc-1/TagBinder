@@ -11,7 +11,7 @@ export type AnyClass = {
     Destroy:(self:any)->(),
     Start:((self:any)->())?,
     init:((self:any)->())?,
-    Update:((self:any, dt:number)->())
+    Update:((self:any, deltaTime:number)->())?
 }
 
 export type FunctionTable = {
@@ -50,6 +50,10 @@ function TagBinder:BindClass(tagName:string, classTable:AnyClass)
 
     self.TaggedInstances[tagName] = {}
     self.TaggedInstanceIndices[tagName] = {}
+
+    if self._running then
+        self:_StartTag(self._setupClass, self._destroyClass, tagName, classTable)
+    end
 end
 
 function TagBinder:UnbindClass(tagName:string)
@@ -113,6 +117,10 @@ function TagBinder:BindFunction(tagName:string, fnTable:FunctionTable)
 
     self.TaggedInstances[tagName] = {}
     self.TaggedInstanceIndices[tagName] = {}
+
+    if self._running then
+        self:_StartTag(self._setupFunction, self._destroyFunction, tagName, fnTable)
+    end
 end
 
 function TagBinder:UnbindFunction(tagName:string)
@@ -165,71 +173,67 @@ function TagBinder:_RemoveTaggedInstance(tagName:string, obj:Instance)
     self.TaggedInstanceIndices[tagName][obj] = nil
 end
 
+function TagBinder:_setupClass(class:AnyClass, obj:Instance, tagName:string)
+    local newClassObj = class.new(obj, obj:GetAttributes())
+    if newClassObj ~= nil then
+        self.ClassObjects[tagName][obj] = newClassObj
+        if typeof(newClassObj.Start) == "function" then
+            task.spawn(newClassObj.Start, newClassObj)
+        end
+        if typeof(newClassObj.init) == "function" then
+            task.spawn(newClassObj.init, newClassObj)
+        end
+
+        self:_RegisterTaggedInstance(tagName, obj)
+    end
+end
+
+function TagBinder:_destroyClass(class:AnyClass, obj:Instance, tagName:string)
+    local classObject = self.ClassObjects[tagName][obj]
+    if classObject and typeof(classObject.Destroy) == "function" then
+        classObject:Destroy()
+        self.ClassObjects[tagName][obj] = nil
+        self:_RemoveTaggedInstance(tagName, obj)
+    end
+end
+
+function TagBinder:_setupFunction(fnTable:FunctionTable, obj:Instance, tagName:string)
+    fnTable.setup(obj, obj:GetAttributes())
+    self.BindedFunctionInstances[tagName][obj] = true
+    self:_RegisterTaggedInstance(tagName, obj)
+end
+
+function TagBinder:_destroyFunction(fnTable:FunctionTable, obj:Instance, tagName:string)
+    if fnTable.destroy then
+        fnTable.destroy(obj, obj:GetAttributes())
+    end
+    self.BindedFunctionInstances[tagName][obj] = nil
+    self:_RemoveTaggedInstance(tagName, obj)
+end
+
+function TagBinder:_StartTag(setupCb:AnyFunction, destroyCb:AnyFunction, tagName:string, sourceTable:AnyClass|FunctionTable)
+    local initial = CollectionService:GetTagged(tagName)
+    for _,obj in initial do
+        setupCb(self, sourceTable, obj, tagName)
+    end
+    CollectionService:GetInstanceAddedSignal(tagName):Connect(function(obj)
+        setupCb(self, sourceTable, obj, tagName)
+    end)
+    CollectionService:GetInstanceRemovedSignal(tagName):Connect(function(obj)
+        destroyCb(self, sourceTable, obj, tagName)
+    end)
+end
+
 function TagBinder:Start()
     if self._running then return end
     self._running = true
 
-    local function setupClass(class:AnyClass, obj:Instance, tagName:string)
-        local newClassObj = class.new(obj, obj:GetAttributes())
-        if newClassObj ~= nil then
-            self.ClassObjects[tagName][obj] = newClassObj
-            if typeof(newClassObj.Start) == "function" then
-                task.spawn(newClassObj.Start, newClassObj)
-            end
-            if typeof(newClassObj.init) == "function" then
-                task.spawn(newClassObj.init, newClassObj)
-            end
-
-            self:_RegisterTaggedInstance(tagName, obj)
-        end
-    end
-
-    local function destroyClass(class:AnyClass, obj:Instance, tagName:string)
-        self.ClassObjects[tagName][obj]:Destroy()
-        self.ClassObjects[tagName][obj] = nil
-        self:_RemoveTaggedInstance(tagName, obj)
-    end
-
-    local function setupFunction(fnTable:FunctionTable, obj:Instance, tagName:string)
-        fnTable.setup(obj, obj:GetAttributes())
-        self.BindedFunctionInstances[tagName][obj] = true
-        self:_RegisterTaggedInstance(tagName, obj)
-    end
-
-    local function destroyFunction(fnTable:FunctionTable, obj:Instance, tagName:string)
-        if fnTable.destroy then
-            fnTable.destroy(obj, obj:GetAttributes())
-        end
-        self.BindedFunctionInstances[tagName][obj] = nil
-        self:_RemoveTaggedInstance(tagName, obj)
-    end
-
     for tagName, class in self.BindedClasses do
-        local initial = CollectionService:GetTagged(tagName)
-        for _,obj in initial do
-           setupClass(class, obj, tagName)
-        end
-
-        CollectionService:GetInstanceAddedSignal(tagName):Connect(function(obj)
-            setupClass(class, obj, tagName)
-        end)
-        CollectionService:GetInstanceRemovedSignal(tagName):Connect(function(obj)
-            destroyClass(class, obj, tagName)
-        end)
+        self:_StartTag(self._setupClass, self._destroyClass, tagName, class)
     end
 
     for tagName, fnTable in self.BindedFunctions do
-        local initial = CollectionService:GetTagged(tagName)
-        for _,obj:Instance in initial do
-            setupFunction(fnTable, obj, tagName)
-        end
-
-        CollectionService:GetInstanceAddedSignal(tagName):Connect(function(obj:Instance)
-            setupFunction(fnTable, obj, tagName)
-        end)
-        CollectionService:GetInstanceRemovedSignal(tagName):Connect(function(obj)
-            destroyFunction(fnTable, obj, tagName)
-        end)
+        self:_StartTag(self._setupFunction, self._destroyFunction, tagName, fnTable)
     end
 
     RunService.Heartbeat:Connect(function(deltaTime)
@@ -248,7 +252,7 @@ function TagBinder:Start()
 end
 
 if AUTO_START then
-    TagBinder:Start()
+    (TagBinder::any):Start()
 end
 
 return TagBinder
