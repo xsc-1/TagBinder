@@ -35,6 +35,12 @@ TagBinder.UpdatingClassTags = {} :: {[string]:boolean}
 TagBinder.TaggedInstances = {} :: {[string]:{Instance}}
 TagBinder.TaggedInstanceIndices = {} :: {[string]:{[Instance]:number}}
 
+--[=[
+    binds an OOP class to a tag
+    whenever an instance gets created
+    of the given tag,
+    an OOP object gets created too
+]=]
 function TagBinder:BindClass(tagName:string, classTable:AnyClass)
     assert(typeof(classTable) == "table", "class must be a valid class")
     assert(classTable.new, "class table must contain a method named (new)")
@@ -56,6 +62,11 @@ function TagBinder:BindClass(tagName:string, classTable:AnyClass)
     end
 end
 
+--[=[
+    unbinds a tag,
+    stops creating new
+    oop objects
+]=]
 function TagBinder:UnbindClass(tagName:string)
     self.BindedClasses[tagName] = nil
     if self.ClassObjects[tagName] then
@@ -65,6 +76,10 @@ function TagBinder:UnbindClass(tagName:string)
     self.UpdatingClassTags[tagName] = nil
 end
 
+--[=[
+    returns the OOP
+    object by Instance and tagName
+]=]
 function TagBinder:GetClassObject<A>(obj:A, tagName:string) : any
     if self.ClassObjects[tagName] then
         return self.ClassObjects[tagName][obj]
@@ -73,10 +88,19 @@ function TagBinder:GetClassObject<A>(obj:A, tagName:string) : any
     end
 end
 
+--[=[
+    returns a table
+    containing all OOP
+    objects of a tag
+]=]
 function TagBinder:GetAllClassObjects(tagName:string) : {[Instance]:any}
     return self.ClassObjects[tagName] or {}
 end
 
+--[=[
+    yields until requested
+    OOP object gets created
+]=]
 function TagBinder:WaitForClassObject<A>(obj:A, tagName:string, timeout:number?) : any
     timeout = timeout or 5
     local elapsedTime = 0
@@ -95,6 +119,11 @@ function TagBinder:WaitForClassObject<A>(obj:A, tagName:string, timeout:number?)
     return nil
 end
 
+--[=[
+    binds a table of functions
+    to a tag to be called on
+    certain actions
+]=]
 function TagBinder:BindFunction(tagName:string, fnTable:FunctionTable)
     assert(typeof(fnTable.setup) == "function", "setup function must be a function")
     assert(typeof(fnTable.destroy) == "function" or typeof(fnTable.destroy) == "nil", "destroy function must be a function or nil")
@@ -123,12 +152,20 @@ function TagBinder:BindFunction(tagName:string, fnTable:FunctionTable)
     end
 end
 
+--[=[
+    stop calling functions for
+    a tag and clean ups
+]=]
 function TagBinder:UnbindFunction(tagName:string)
     self.BindedFunctions[tagName] = nil
     self.BindedFunctionInstances[tagName] = nil
     self.UpdatingFunctionTags[tagName] = nil
 end
 
+--[=[
+    returns true if the instance has
+    all of the given tags
+]=]
 function TagBinder:HasAllTags(obj:Instance, tags:{string})
     for _,tagName in tags do
         if not self.TaggedInstanceIndices[tagName][obj] then
@@ -138,6 +175,10 @@ function TagBinder:HasAllTags(obj:Instance, tags:{string})
     return true
 end
 
+--[=[
+    returns true if the instance has
+    any one of the given tags
+]=]
 function TagBinder:HasAnyTag(obj:Instance, tags:{string})
     for _,tagName in tags do
         if self.TaggedInstanceIndices[tagName][obj] then
@@ -147,15 +188,30 @@ function TagBinder:HasAnyTag(obj:Instance, tags:{string})
     return false
 end
 
+--[=[
+    returns true if the instance
+    has the given tag
+]=]
 function TagBinder:HasTag(obj:Instance, tagName:string)
     return self.TaggedInstanceIndices[tagName][obj] ~= nil
 end
 
+--[=[
+    private,
+    adds an instance to a table
+    and saves its index to
+    access later
+]=]
 function TagBinder:_RegisterTaggedInstance(tagName:string, obj:Instance)
     self.TaggedInstances[tagName][#self.TaggedInstances[tagName]+1] = obj
     self.TaggedInstanceIndices[tagName][obj] = #self.TaggedInstances[tagName]
 end
 
+--[=[
+    private,
+    removes an instance from a
+    table without shifting elements
+]=]
 function TagBinder:_RemoveTaggedInstance(tagName:string, obj:Instance)
     local index = self.TaggedInstanceIndices[tagName][obj]
     if not index then
@@ -173,6 +229,12 @@ function TagBinder:_RemoveTaggedInstance(tagName:string, obj:Instance)
     self.TaggedInstanceIndices[tagName][obj] = nil
 end
 
+--[=[
+    private,
+    creates OOP object and
+    calls lifecycle methods if exist
+    for a tagged instance
+]=]
 function TagBinder:_setupClass(class:AnyClass, obj:Instance, tagName:string)
     local newClassObj = class.new(obj, obj:GetAttributes())
     if newClassObj ~= nil then
@@ -188,6 +250,12 @@ function TagBinder:_setupClass(class:AnyClass, obj:Instance, tagName:string)
     end
 end
 
+--[=[
+    private,
+    destroy OOP object
+    and cleans up for a removed
+    tagged instance
+]=]
 function TagBinder:_destroyClass(class:AnyClass, obj:Instance, tagName:string)
     local classObject = self.ClassObjects[tagName][obj]
     if classObject and typeof(classObject.Destroy) == "function" then
@@ -197,12 +265,22 @@ function TagBinder:_destroyClass(class:AnyClass, obj:Instance, tagName:string)
     end
 end
 
+--[=[
+    private,
+    calls setup function
+    for a tagged instance
+]=]
 function TagBinder:_setupFunction(fnTable:FunctionTable, obj:Instance, tagName:string)
     fnTable.setup(obj, obj:GetAttributes())
     self.BindedFunctionInstances[tagName][obj] = true
     self:_RegisterTaggedInstance(tagName, obj)
 end
 
+--[=[
+    private,
+    calls destroy method 
+    for a removed tagged instance
+]=]
 function TagBinder:_destroyFunction(fnTable:FunctionTable, obj:Instance, tagName:string)
     if fnTable.destroy then
         fnTable.destroy(obj, obj:GetAttributes())
@@ -211,6 +289,12 @@ function TagBinder:_destroyFunction(fnTable:FunctionTable, obj:Instance, tagName
     self:_RemoveTaggedInstance(tagName, obj)
 end
 
+--[=[
+    private,
+    connects setup and destroy
+    methods to CollectionService
+    events
+]=]
 function TagBinder:_StartTag(setupCb:AnyFunction, destroyCb:AnyFunction, tagName:string, sourceTable:AnyClass|FunctionTable)
     local initial = CollectionService:GetTagged(tagName)
     for _,obj in initial do
@@ -224,6 +308,11 @@ function TagBinder:_StartTag(setupCb:AnyFunction, destroyCb:AnyFunction, tagName
     end)
 end
 
+
+--[=[
+    starts the module,
+    can be called once
+]=]
 function TagBinder:Start()
     if self._running then return end
     self._running = true
