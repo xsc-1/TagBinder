@@ -100,5 +100,13 @@ TagBinder:GetAllClassObjects("Tag")
 --yield the thread until a class object gets created for an instance and return the class object
 TagBinder:WaitForClassObject(part, "Tag", 10) --10 seconds timeout
 
+--returns true if the object has the tag
+TagBinder:HasTag(part, "Tag")
+
+--returns true if the object has all of the tags
+TagBinder:HasAllTags(part, {"Tag", "Tag2", "Tag3"})
+
+--returns true if the object has any of the tags
+TagBinder:HasAnyTag(part, {"Tag", "Tag2", "Tag3"})
 
 ```
