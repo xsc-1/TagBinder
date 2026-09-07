@@ -86,6 +86,14 @@ end
 function TagBinder:UnbindClass(tagName:string)
     assertString(tagName, "tagName")
 
+    for _,classObject in self.ClassObjects[tagName] do
+        classObject:Destroy()
+    end
+
+    for _,c in self.Connections[tagName] do
+        c:Disconnect() 
+    end
+
     self.BindedClasses[tagName] = nil
     if self.ClassObjects[tagName] then
         table.clear(self.ClassObjects[tagName])
@@ -93,9 +101,6 @@ function TagBinder:UnbindClass(tagName:string)
     end
     self.UpdatingClassTags[tagName] = nil
 
-    for _,c in self.Connections[tagName] do
-        c:Disconnect() 
-    end
     self.Connections[tagName] = nil
 
     self.TaggedInstances[tagName] = nil
@@ -192,11 +197,20 @@ end
 ]=]
 function TagBinder:UnbindFunction(tagName:string)
     assertString(tagName, "tagName")
-    self.BindedFunctions[tagName] = nil
-    self.UpdatingFunctionTags[tagName] = nil
+    
+    for _,instance in self.TaggedInstances[tagName] do
+        if self.BindedFunctions[tagName].destroy then
+            self.BindedFunctions[tagName].destroy(instance)
+        end
+    end
+    
     for _,c in self.Connections[tagName] do
         c:Disconnect()
     end
+
+    self.BindedFunctions[tagName] = nil
+    self.UpdatingFunctionTags[tagName] = nil
+    
     self.Connections[tagName] = nil
 
     self.TaggedInstances[tagName] = nil
@@ -210,7 +224,7 @@ end
 function TagBinder:HasAllTags(obj:Instance, tags:{string})
     assertObject(obj)
     for _,tagName in tags do
-        if not self.TaggedInstanceIndices[tagName][obj] then
+        if not self.TaggedInstanceIndices[tagName] or not self.TaggedInstanceIndices[tagName][obj] then
             return false
         end
     end
@@ -287,10 +301,10 @@ function TagBinder:_setupClass(class:AnyClass, obj:Instance, tagName:string)
     local newClassObj = class.new(obj, obj:GetAttributes())
     if newClassObj ~= nil then
         self.ClassObjects[tagName][obj] = newClassObj
-        if typeof(newClassObj.Start) == "function" then
+        if typeof(newClassObj.init) == "function" then
             newClassObj:init()
         end
-        if typeof(newClassObj.init) == "function" then
+        if typeof(newClassObj.Start) == "function" then
             task.spawn(newClassObj.Start, newClassObj)
         end
 
@@ -373,14 +387,20 @@ function TagBinder:Start()
 
     RunService.Heartbeat:Connect(function(deltaTime)
         for tagName, _ in self.UpdatingFunctionTags do
-            for _,obj in self.TaggedInstances[tagName] do
-                self.BindedFunctions[tagName].update(obj, deltaTime)
+            local functions = self.BindedFunctions[tagName]
+            local instances = self.TaggedInstances[tagName]
+            if not functions or not instances then continue end
+            for _,obj in instances do
+                functions.update(obj, deltaTime)
             end
         end
 
         for tagName, _ in self.UpdatingClassTags do
-            for _,obj in self.TaggedInstances[tagName] do
-                self.ClassObjects[tagName][obj]:Update(deltaTime)
+            local classObjects = self.ClassObjects[tagName]
+            local instances = self.TaggedInstances[tagName]
+            if not classObjects or not instances then continue end
+            for _,obj in instances do
+                classObjects[obj]:Update(deltaTime)
             end
         end
     end)
