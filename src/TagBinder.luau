@@ -31,8 +31,8 @@ local TagBinder = {}
 
 TagBinder._running = false
 
-TagBinder.BindedClasses = {} :: {[string]:AnyClass}
-TagBinder.BindedFunctions = {} :: {[string]:FunctionTable}
+TagBinder.BoundClasses = {} :: {[string]:AnyClass}
+TagBinder.BoundFunctions = {} :: {[string]:FunctionTable}
 
 TagBinder.ClassObjects = {} :: {[string]:{[any]:AnyClass}}
 
@@ -55,12 +55,12 @@ function TagBinder:BindClass(tagName:string, classTable:AnyClass)
     assert(classTable.Destroy, "class table must contain a method named (Destroy)")
     assertString(tagName, "tagName")
 
-    if self.BindedClasses[tagName] ~= nil or self.BindedFunctions[tagName] ~= nil then
+    if self.BoundClasses[tagName] ~= nil or self.BoundFunctions[tagName] ~= nil then
         warn(tagName.." tag is already bound")
         return
     end
 
-    self.BindedClasses[tagName] = classTable
+    self.BoundClasses[tagName] = classTable
     self.ClassObjects[tagName] = {}
 
     if typeof(classTable.Update) == "function" then
@@ -94,7 +94,7 @@ function TagBinder:UnbindClass(tagName:string)
         c:Disconnect() 
     end
 
-    self.BindedClasses[tagName] = nil
+    self.BoundClasses[tagName] = nil
     if self.ClassObjects[tagName] then
         table.clear(self.ClassObjects[tagName])
         self.ClassObjects[tagName] = nil
@@ -167,15 +167,15 @@ function TagBinder:BindFunction(tagName:string, fnTable:FunctionTable)
     assert(typeof(fnTable.update) == "function" or typeof(fnTable.update) == "nil", "update function must be a function or nil")
     assertString(tagName, "tagName")
 
-    if self.BindedFunctions[tagName] ~= nil or self.BindedClasses[tagName] ~= nil then
+    if self.BoundFunctions[tagName] ~= nil or self.BoundClasses[tagName] ~= nil then
         warn(tagName.." tag is already bound")
         return
     end
 
-    self.BindedFunctions[tagName] = {}
-    self.BindedFunctions[tagName].setup = fnTable.setup
-    self.BindedFunctions[tagName].destroy = fnTable.destroy
-    self.BindedFunctions[tagName].update = fnTable.update
+    self.BoundFunctions[tagName] = {}
+    self.BoundFunctions[tagName].setup = fnTable.setup
+    self.BoundFunctions[tagName].destroy = fnTable.destroy
+    self.BoundFunctions[tagName].update = fnTable.update
 
     if fnTable.update then
         self.UpdatingFunctionTags[tagName] = true
@@ -199,8 +199,8 @@ function TagBinder:UnbindFunction(tagName:string)
     assertString(tagName, "tagName")
     
     for _,instance in self.TaggedInstances[tagName] do
-        if self.BindedFunctions[tagName].destroy then
-            self.BindedFunctions[tagName].destroy(instance)
+        if self.BoundFunctions[tagName].destroy then
+            self.BoundFunctions[tagName].destroy(instance)
         end
     end
     
@@ -208,7 +208,7 @@ function TagBinder:UnbindFunction(tagName:string)
         c:Disconnect()
     end
 
-    self.BindedFunctions[tagName] = nil
+    self.BoundFunctions[tagName] = nil
     self.UpdatingFunctionTags[tagName] = nil
     
     self.Connections[tagName] = nil
@@ -377,17 +377,17 @@ function TagBinder:Start()
     if self._running then return end
     self._running = true
 
-    for tagName, class in self.BindedClasses do
+    for tagName, class in self.BoundClasses do
         self:_StartTag(self._setupClass, self._destroyClass, tagName, class)
     end
 
-    for tagName, fnTable in self.BindedFunctions do
+    for tagName, fnTable in self.BoundFunctions do
         self:_StartTag(self._setupFunction, self._destroyFunction, tagName, fnTable)
     end
 
     RunService.Heartbeat:Connect(function(deltaTime)
         for tagName, _ in self.UpdatingFunctionTags do
-            local functions = self.BindedFunctions[tagName]
+            local functions = self.BoundFunctions[tagName]
             local instances = self.TaggedInstances[tagName]
             if not functions or not instances then continue end
             for _,obj in instances do
